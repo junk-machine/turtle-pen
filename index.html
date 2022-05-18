@@ -1,0 +1,588 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Turtle Pen</title>
+    <style>
+        html, body { height: 100vh; margin: 0; overflow: hidden; }
+        body { display: flex; flex-direction: row; }
+
+        /* Remove focus rectangle */
+        :focus {
+            outline: 0 !important;
+        }
+
+        #commandsLogContainer, #commandLine {
+            border: 2px solid;
+            padding: 0.5em;
+            font-family: Consolas;
+            font-size: large;
+            text-transform: uppercase;
+        }
+
+        #commandsLogContainer {
+            flex: 1; /* Consume all available space  */
+            display: flex; /* Dock commands to the bottom */
+            flex-flow: column;
+            justify-content: end;
+            overflow: auto;
+            border-color: lightblue;
+        }
+
+        #commandsLog {
+            min-height: 0; /* Fix vertical scroll within commands log UL element */
+            padding: 0;
+            margin: 0;
+            list-style: none;
+        }
+            #commandsLog li { white-space: nowrap; }
+
+        #commandLine {
+            border-color: lightpink;
+            font-weight: bold;
+        }
+
+        #canvas {
+            height: 100%;
+            width: 100%;
+        }
+
+        #messageBox {
+            position: absolute;
+            background: lightblue;
+            padding: 0.5em;
+            text-align: center;
+            font-weight: bold;
+            font-family: Consolas;
+        }
+            #messageBox:before {
+                content: "";
+                width: 0px;
+                height: 0px;
+                position: absolute;
+                border-left: 10px solid transparent;
+                border-right: 10px solid transparent;
+                border-top: 10px solid lightblue;
+                border-bottom: 10px solid transparent;
+                left: calc(50% - 10px);
+                bottom: -20px;
+            }
+    </style>
+
+    <script language="javascript">
+        /**
+         * Size of a single step in pixels.
+         */
+        const StepSize = 25;
+
+        /**
+         * English command set.
+         */
+        const EnglishLocalizationPack = {
+            CommandsSet: {
+                MoveForward: 'FD',
+                MoveBack: 'BK',
+                TurnLeft: 'LT',
+                TurnRight: 'RT',
+                LiftPen: 'PU',
+                LowerPen: 'PD',
+                SetColor: 'COLOR',
+                Colors: {
+                    'RED': '#F00',
+                    'ORANGE': '#F60',
+                    'YELLOW': '#FF0',
+                    'GREEN': '#0F0',
+                    'LBLUE': '#0CF',
+                    'BLUE': '#00F',
+                    'PURPLE': '#90F',
+                    'BLACK': '#000',
+                    'GRAY': '#CCC',
+                    'PINK': '#F3F'
+                }
+            },
+            Messages: {
+                ColorArgumentMissing: "Please specify a color",
+                UnknownColor: "Unknown color '{0}'",
+                UnknownCommand: "Unknown command '{0}'",
+                InvalidStepsArgument: "Invalid number of steps '{0}'",
+                InvalidAngleArgument: "Invalid angle '{0}'",
+            }
+        };
+
+        /**
+         * English command set.
+         */
+        const RussianLocalizationPack = {
+            CommandsSet: {
+                MoveForward: 'ВП',
+                MoveBack: 'НЗ',
+                TurnLeft: 'ЛВ',
+                TurnRight: 'ПР',
+                LiftPen: 'ПП',
+                LowerPen: 'ОП',
+                SetColor: 'ЦВ',
+                Colors: {
+                    'КР': '#F00',
+                    'ОР': '#F60',
+                    'ЖЕЛ': '#FF0',
+                    'ЗЕЛ': '#0F0',
+                    'ГОЛ': '#0CF',
+                    'СИН': '#00F',
+                    'ФИО': '#90F',
+                    'ЧЕР': '#000',
+                    'СЕР': '#CCC',
+                    'РОЗ': '#F3F'
+                }
+            },
+            Messages: {
+                ColorArgumentMissing: "Не понимаю цвет",
+                UnknownColor: "Не знаю цвет '{0}'",
+                UnknownCommand: "Не знаю комманду '{0}'",
+                InvalidStepsArgument: "Не понимаю шаги '{0}'",
+                InvalidAngleArgument: "Не понимаю угол '{0}'",
+            }
+        };
+
+        /**
+         * Current command set.
+         */
+        var CurrentLanguage = RussianLocalizationPack;
+
+        /**
+         * Polyfill for the `String.format` function
+         */
+        if (!String.format) {
+            String.format = function (format) {
+                var args = Array.prototype.slice.call(arguments, 1);
+                return format.replace(/{(\d+)}/g, function (match, number) {
+                    return typeof args[number] != 'undefined' ? args[number] : match;
+                });
+            };
+        }
+
+        var LastState = createInitialState();
+
+        /**
+         * Dispatches the key press to the correct handler.
+         *
+         * @param event Event argument for the key press event.
+         */
+        function processCommandLineKey(event) {
+            if (event.key === 'Enter' || event.keyCode === 13) {
+                applyCommand();
+                event.preventDefault();
+            } else if (event.ctrlKey && event.keyCode === 90) { // Ctrl+Z
+                undoCommand();
+                event.preventDefault();
+            }
+        }
+
+        /**
+         * Validates current command and adds it to the end of the log.
+         */
+        function applyCommand() {
+            const commandLine = CommandLine.value.trim();
+
+            if (commandLine === '') {
+                return;
+            }
+
+            // Validate new command
+            try {
+                drawCommand(null, commandLine, createInitialState());
+            } catch (error) {
+                setMessage(error);
+                return;
+            }
+
+            setMessage(null);
+
+            // Append new command to the log
+            const newCommand = document.createElement('li');
+            newCommand.innerText = commandLine;
+            CommandsLog.appendChild(newCommand);
+
+            CommandsLogContainer.scrollTop = CommandsLogContainer.scrollHeight;
+
+            // Empty command line
+            CommandLine.value = '';
+
+            // Redraw the image
+            drawImage();
+        }
+
+        /**
+         * Removes the last command from the log.
+         */
+        function undoCommand() {
+            // If there are commands in the log, remove the last one and update the log
+            if (CommandsLog.lastElementChild) {
+                CommandsLog.removeChild(CommandsLog.lastElementChild);
+
+                // Clear the message, as image content is going to change at this point
+                // and we don't want old message to dangle around
+                setMessage(null);
+
+                // Redraw the image
+                drawImage();
+            }
+        }
+
+        /**
+         * Redraws an image based on the current commands log.
+         */
+        function drawImage() {
+            // Adjust viewport to the actual canvas element size
+            Canvas.width = Canvas.clientWidth;
+            Canvas.height = Canvas.clientHeight;
+
+            const drawing = Canvas.getContext('2d');
+            drawing.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Start drawing from the center of the canvas
+            drawing.translate(canvas.width / 2, canvas.height / 2);
+
+            // Draw the steps grid
+            drawGrid(drawing);
+
+            let state = createInitialState();
+
+            // Start with the pen down.
+            drawing.beginPath();
+            drawing.strokeStyle = "black";
+            drawing.lineWidth = 3;
+            drawing.moveTo(state.x, state.y);
+
+            for (var commandNode of CommandsLog.childNodes) {
+                const commandLine = commandNode.innerText.trim();
+
+                if (commandLine) {
+                    drawCommand(drawing, commandLine, state);
+                }
+            }
+
+            // Finish the last path, if pen was down
+            if (!state.isPenUp) {
+                drawing.stroke();
+            }
+
+            drawTurtle(drawing, state);
+
+            LastState = state;
+            positionMessageBox();
+        }
+
+        /**
+         * Performs drawing operations associated with the given command line.
+         * This function is also used to validate the command, in which case `drawing`
+         * parameter will be null. We should handle it gracefully.
+         * 
+         * @param drawing Canvas drawing context.
+         * @param commandLine Command to execute (inclding any arguments).
+         * @param state Current drawing state.
+         */
+        function drawCommand(drawing, commandLine, state) {
+            const commandArgsSeparatorIndex = commandLine.indexOf(' ');
+
+            let command =
+                commandArgsSeparatorIndex == -1
+                    ? commandLine
+                    : commandLine.substr(0, commandArgsSeparatorIndex);
+            command = command.trim();
+
+            const commandArgs =
+                commandArgsSeparatorIndex == -1
+                    ? []
+                    : commandLine.substr(commandArgsSeparatorIndex)
+                        .split(',').map(arg => arg.trim());
+
+            let steps = 0;
+            switch (command.toUpperCase()) {
+                case CurrentLanguage.CommandsSet.MoveForward:
+                    steps = getStepsArgument(commandArgs, 0);
+                    state.x += Math.round(steps * StepSize * Math.cos(state.direction * Math.PI / 180));
+                    state.y += Math.round(steps * StepSize * Math.sin(state.direction * Math.PI / 180));
+                    if (drawing) {
+                        drawing[state.isPenUp ? 'moveTo' : 'lineTo'](state.x, state.y);
+                    }
+                    break;
+
+                case CurrentLanguage.CommandsSet.MoveBack:
+                    steps = getStepsArgument(commandArgs, 0);
+                    state.x -= Math.round(steps * StepSize * Math.cos(state.direction * Math.PI / 180));
+                    state.y -= Math.round(steps * StepSize * Math.sin(state.direction * Math.PI / 180));
+                    if (drawing) {
+                        drawing[state.isPenUp ? 'moveTo' : 'lineTo'](state.x, state.y);
+                    }
+                    break;
+
+                case CurrentLanguage.CommandsSet.TurnLeft:
+                    state.direction = (state.direction - getAngleArgument(commandArgs, 0)) % 360
+                    break;
+
+                case CurrentLanguage.CommandsSet.TurnRight:
+                    state.direction = (state.direction + getAngleArgument(commandArgs, 0)) % 360
+                    break;
+
+                case CurrentLanguage.CommandsSet.LiftPen:
+                    if (!state.isPenUp) {
+                        // Finish the path and lift the pen
+                        if (drawing) {
+                            drawing.stroke();
+                        }
+
+                        state.isPenUp = true;
+                    }
+                    break;
+
+                case CurrentLanguage.CommandsSet.LowerPen:
+                    if (state.isPenUp) {
+                        // Finish the path and lift the pen
+                        state.isPenUp = false;
+
+                        if (drawing) {
+                            drawing.beginPath();
+                            drawing.moveTo(state.x, state.y);
+                        }
+                    }
+                    break;
+
+                case CurrentLanguage.CommandsSet.SetColor:
+                    if (commandArgs.length !== 1) {
+                        throw CurrentLanguage.Messages.ColorArgumentMissing;
+                    }
+
+                    var newColor = CurrentLanguage.CommandsSet.Colors[commandArgs[0].toUpperCase()];
+
+                    if (!newColor) {
+                        throw String.format(CurrentLanguage.Messages.UnknownColor, commandArgs[0].toUpperCase());
+                    }
+
+                    if (drawing) {
+                        // Finish path with the existing color, if we were drawing
+                        if (!state.isPenUp) { drawing.stroke(); }
+                        drawing.strokeStyle = newColor;
+                        if (!state.isPenUp) { drawing.beginPath(); drawing.moveTo(state.x, state.y); }
+                    }
+
+                    break;
+
+                default:
+                    throw String.format(CurrentLanguage.Messages.UnknownCommand, command.toUpperCase());
+            }
+        }
+
+        /**
+         * Draws the grid lines on the canvas.
+         * 
+         * @param drawing Canvas drawing context.
+         */
+        function drawGrid(drawing) {
+            // We compute line positions based on the steps, rather than coordinates, because we want to preciscely hit (0, 0)
+            const halfWidth = drawing.canvas.width / 2;
+            const halfHeight = drawing.canvas.height / 2;
+
+            const halfVerticalSteps = Math.ceil(halfWidth / StepSize);
+            const halfHorizontalSteps = Math.ceil(halfHeight / StepSize);
+
+            drawing.beginPath();
+
+            // Draw vertical lines
+            for (let currentStep = -halfVerticalSteps; currentStep < halfVerticalSteps; ++currentStep) {
+                const stepX = currentStep * StepSize;
+                drawing.moveTo(stepX, -halfHeight);
+                drawing.lineTo(stepX, halfHeight);
+            }
+
+            // Draw horizontal lines
+            for (let currentStep = -halfHorizontalSteps; currentStep < halfHorizontalSteps; ++currentStep) {
+                const stepY = currentStep * StepSize;
+                drawing.moveTo(-halfWidth, stepY);
+                drawing.lineTo(halfWidth, stepY);
+            }
+
+            drawing.lineWidth = 0.5;
+            drawing.strokeStyle = 'lightgray';
+
+            drawing.stroke();
+        }
+
+        /**
+         * Draws the turtle in the current position.
+         * 
+         * @param drawing Canvas drawing context.
+         * @param state Current drawing state.
+         */
+        function drawTurtle(drawing, state) {
+            // We will draw in relative coordinates facing up, so update transpose matrix to recenter and rotate
+            drawing.translate(state.x, state.y);
+            drawing.scale(0.55, 0.55);
+            drawing.rotate((state.direction - 270) * Math.PI / 180);
+
+            drawing.beginPath();
+
+            const bodyWidth = StepSize / 2;
+            const bodyHeight = StepSize / 1.7;
+
+            // Draw body
+            drawing.ellipse(0, 0, bodyWidth, bodyHeight, 0, 0, 2 * Math.PI);
+
+            drawing.moveTo(StepSize / 4, 0);
+            drawing.ellipse(0, 0, StepSize / 4, StepSize / 4, 0, 0, 2 * Math.PI);
+
+            const vector45 = Math.cos(Math.PI / 4);
+
+            drawing.moveTo(StepSize / 4 * vector45, StepSize / 4 * vector45);
+            drawing.lineTo(bodyWidth * vector45, bodyHeight * vector45);
+
+            drawing.moveTo(-StepSize / 4 * vector45, StepSize / 4 * vector45);
+            drawing.lineTo(-bodyWidth * vector45, bodyHeight * vector45);
+
+            drawing.moveTo(-StepSize / 4 * vector45, -StepSize / 4 * vector45);
+            drawing.lineTo(-bodyWidth * vector45, -bodyHeight * vector45);
+
+            drawing.moveTo(StepSize / 4 * vector45, -StepSize / 4 * vector45);
+            drawing.lineTo(bodyWidth * vector45, -bodyHeight * vector45);
+
+            // Draw head
+            drawing.moveTo(StepSize / 4, -4/5 * StepSize);
+            drawing.ellipse(0, -4/5 * StepSize, StepSize / 5, StepSize / 5, 0, 0, 2 * Math.PI);
+
+            // Draw legs (clockwise, starting from bottom-right)
+            drawing.moveTo(bodyWidth * vector45, bodyHeight * vector45);
+            drawing.ellipse(
+                bodyWidth * vector45, bodyHeight * vector45,
+                StepSize / 6, StepSize / 6, 0,
+                -Math.PI / 4, 3/4 * Math.PI);
+
+            drawing.moveTo(-bodyWidth * vector45, bodyHeight * vector45);
+            drawing.ellipse(
+                -bodyWidth * vector45, bodyHeight * vector45,
+                StepSize / 6, StepSize / 6, 0,
+                Math.PI / 4, 5/4 * Math.PI);
+
+            drawing.moveTo(-bodyWidth * vector45, -bodyHeight * vector45);
+            drawing.ellipse(
+                -bodyWidth * vector45, -bodyHeight * vector45,
+                StepSize / 6, StepSize / 6, 0,
+                3/4 * Math.PI, 7/4 * Math.PI);
+
+            drawing.moveTo(bodyWidth * vector45, -bodyHeight * vector45);
+            drawing.ellipse(
+                bodyWidth * vector45, -bodyHeight * vector45,
+                StepSize / 6, StepSize / 6, 0,
+                5/4 * Math.PI, 9/4 * Math.PI);
+
+            // Draw tail
+            const tailLength = StepSize / 1.2;
+            drawing.moveTo(-bodyWidth * Math.sin(Math.PI / 6), bodyHeight * Math.cos(Math.PI / 6));
+            drawing.lineTo(0, tailLength);
+
+            drawing.moveTo(bodyWidth * Math.sin(Math.PI / 6), bodyHeight * Math.cos(Math.PI / 6));
+            drawing.lineTo(0, tailLength);
+
+            drawing.stroke();
+        }
+
+        /**
+         * Reads the number of steps from the arguments array.
+         * 
+         * @param args Array that contains command arguments.
+         * @param index Index of the argument that defines number of steps.
+         */
+        function getStepsArgument(args, index) {
+            if (args.length <= index) {
+                // Default is 1 step
+                return 1;
+            }
+
+            const steps = parseInt(args[index]);
+            if (!steps) {
+                throw String.format(CurrentLanguage.Messages.InvalidStepsArgument, args[0]);
+            }
+
+            return steps;
+        }
+
+        /**
+         * Reads the angle (in degrees) from the arguments array.
+         * 
+         * @param args Array that contains command arguments.
+         * @param index Index of the argument that defines an angle.
+         */
+        function getAngleArgument(args, index) {
+            if (args.length <= index) {
+                // Default is 90 degree
+                return 90;
+            }
+
+            const angle = parseInt(args[index]);
+            if (!angle) {
+                throw String.format(CurrentLanguage.Messages.InvalidAngleArgument, args[0]);
+            }
+
+            return angle;
+        }
+
+        /**
+         * Creates initial state of the pen.
+         */
+        function createInitialState() {
+            // Our initial direction is facing up, which is 270 degrees (0 is facing right)
+            return { x: 0, y: 0, direction: 270 };
+        }
+
+        /**
+         * Shows or hides the message box.
+         * 
+         * @param message Message to display or null, to hide the message box.
+         */
+        function setMessage(message) {
+            if (message) {
+                MessageBox.style.display = 'block';
+                MessageBox.innerText = message;
+                positionMessageBox();
+            } else {
+                MessageBox.style.display = 'none';
+                MessageBox.innerText = '';
+            }
+        }
+
+        /**
+         * Positions message box relative to the turtle based on last state.
+         */
+        function positionMessageBox() {
+            if (MessageBox.style.display !== 'none') {
+                MessageBox.style.left =
+                    Canvas.offsetLeft + Canvas.clientWidth / 2 + LastState.x - MessageBox.clientWidth / 2 + 'px';
+                MessageBox.style.top =
+                    Canvas.offsetTop + Canvas.clientHeight / 2 + LastState.y - MessageBox.clientHeight - StepSize * 0.55 - 10 + 'px';
+            }
+        }
+    </script>
+</head>
+<body onresize="drawImage()" onload="drawImage()">
+    <div style="height: 100vh; width: 15em; display: flex; flex-direction: column;">
+        <div id="commandsLogContainer">
+            <ul id="commandsLog"></ul>
+        </div>
+        <input id="commandLine" type="text" onkeydown="processCommandLineKey(event)" />
+    </div>
+    <div style="height: 100vh; flex: 1;">
+        <canvas id="canvas">
+        </canvas>
+        <div id="messageBox" style="display: none;"></div>
+    </div>
+
+    <script>
+        var CommandsLogContainer = document.getElementById('commandsLogContainer');
+        var CommandsLog = document.getElementById('commandsLog');
+        var CommandLine = document.getElementById('commandLine');
+        var Canvas = document.getElementById('canvas');
+        var MessageBox = document.getElementById('messageBox');
+
+        CommandLine.focus();
+    </script>
+</body>
+</html>
