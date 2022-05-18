@@ -144,10 +144,15 @@
             }
         };
 
+        var queryString = new URLSearchParams(window.location.search);
+
         /**
          * Current command set.
          */
-        var CurrentLanguage = RussianLocalizationPack;
+        var CurrentLanguage =
+            queryString.get('lang') === 'ru'
+                ? RussianLocalizationPack
+                : EnglishLocalizationPack;
 
         /**
          * Polyfill for the `String.format` function
