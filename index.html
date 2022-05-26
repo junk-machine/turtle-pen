@@ -613,20 +613,42 @@
         /**
          * Exports current commands log to the file.
          */
-        function exportFile() {
-            var commandsLogBlob =
-                new Blob(
-                    // Windows FTW!
-                    [CommandsLog.innerText.toUpperCase().replace('\n', '\r\n')],
-                    { type: 'text/plain' });
+        async function exportFile() {
+            // Windows FTW!
+            const fileContent =
+                CommandsLog.innerText.toUpperCase().replace('\n', '\r\n');
 
-            var blobUrl = window.URL.createObjectURL(commandsLogBlob);
-            var blobLink = document.createElement('a');
-            blobLink.href = blobUrl;
-            blobLink.download = 'turtle-pen.txt';
+            if (window.showSaveFilePicker) {
+                // Chrome only
+                try {
+                    const fileHandle =
+                        await showSaveFilePicker({
+                            excludeAcceptAllOption: true,
+                            suggestedName: 'turtle-pen',
+                            types: [{
+                                description: 'Text file',
+                                accept: { 'text/plain': ['.txt'] },
+                            }]
+                        });
 
-            blobLink.click();
-            window.URL.revokeObjectURL(blobUrl);
+                    const file = await fileHandle.createWritable();
+                    await file.write(fileContent);
+                    await file.close();
+                } catch {
+                    // User may have canceled the saving
+                }
+            } else {
+                const commandsLogBlob =
+                    new Blob([fileContent], { type: 'text/plain' });
+
+                const blobUrl = window.URL.createObjectURL(commandsLogBlob);
+                const blobLink = document.createElement('a');
+                blobLink.href = blobUrl;
+                blobLink.download = 'turtle-pen.txt';
+
+                blobLink.click();
+                window.URL.revokeObjectURL(blobUrl);
+            }
         }
     </script>
 </head>
