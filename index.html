@@ -168,28 +168,51 @@
 
         var LastState = createInitialState();
 
+        // Process global hotkeys
+        document.addEventListener("keydown", (event) => {
+            var handled = false;
+
+            if (event.ctrlKey && event.code === 'KeyZ') {
+                undoCommand();
+                handled = true;
+            } else if (event.ctrlKey && event.code === 'KeyO') {
+                ImportFileControl.click();
+                handled = true;
+            } else if (event.ctrlKey && event.code === 'KeyS') {
+                if (CommandsLog.children.length > 0) {
+                    exportFile();
+                }
+                
+                handled = true;
+            }
+
+            if (handled) {
+                event.preventDefault();
+                return false;
+            }
+        });
+
         /**
          * Dispatches the key press to the correct handler.
          *
          * @param event Event argument for the key press event.
          */
         function processCommandLineKey(event) {
-            if (event.key === 'Enter' || event.keyCode === 13) {
-                applyCommand();
-                event.preventDefault();
-            } else if (event.ctrlKey && event.keyCode === 90) { // Ctrl+Z
-                undoCommand();
+            if (event.key === 'Enter' || event.code === 'Enter') {
+                applyCommand(CommandLine.value);
                 event.preventDefault();
             }
         }
 
         /**
-         * Validates current command and adds it to the end of the log.
+         * Validates provided command line, adds it to the end of the log and updates the drawing.
+         * 
+         * @param commandLine String that contains command with arguments.
          */
-        function applyCommand() {
-            const commandLine = CommandLine.value.trim();
+        function applyCommand(commandLine) {
+            commandLine = commandLine.trim();
 
-            if (commandLine === '') {
+            if (!commandLine) {
                 return;
             }
 
@@ -565,6 +588,46 @@
                     Canvas.offsetTop + Canvas.clientHeight / 2 + LastState.y - MessageBox.clientHeight - StepSize * 0.55 - 10 + 'px';
             }
         }
+
+        /**
+         * Imports all commands from the selected file.
+         * 
+         * @param event Event argument for the file path change event.
+         */
+        function importFile(event) {
+            var file = event.target.files[0];
+            if (file) {
+                var reader = new FileReader();
+                reader.onload = function (loadEvent) {
+                    // Import all commands from the file
+                    for (const commandLine of loadEvent.target.result.split(/\r?\n/)) {
+                        applyCommand(commandLine);
+                    }
+                }
+
+                // Start reading the file
+                reader.readAsText(file);
+            }
+        }
+
+        /**
+         * Exports current commands log to the file.
+         */
+        function exportFile() {
+            var commandsLogBlob =
+                new Blob(
+                    // Windows FTW!
+                    [CommandsLog.innerText.toUpperCase().replace('\n', '\r\n')],
+                    { type: 'text/plain' });
+
+            var blobUrl = window.URL.createObjectURL(commandsLogBlob);
+            var blobLink = document.createElement('a');
+            blobLink.href = blobUrl;
+            blobLink.download = 'turtle-pen.txt';
+
+            blobLink.click();
+            window.URL.revokeObjectURL(blobUrl);
+        }
     </script>
 </head>
 <body onresize="drawImage()" onload="drawImage()">
@@ -580,12 +643,15 @@
         <div id="messageBox" style="display: none;"></div>
     </div>
 
+    <input id="importFileControl" type="file" style="display: none;" onchange="importFile(event)" />
+
     <script>
         var CommandsLogContainer = document.getElementById('commandsLogContainer');
         var CommandsLog = document.getElementById('commandsLog');
         var CommandLine = document.getElementById('commandLine');
         var Canvas = document.getElementById('canvas');
         var MessageBox = document.getElementById('messageBox');
+        var ImportFileControl = document.getElementById('importFileControl');
 
         CommandLine.focus();
     </script>
